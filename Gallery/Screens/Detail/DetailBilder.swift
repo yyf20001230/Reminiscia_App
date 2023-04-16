@@ -9,14 +9,7 @@ import UIKit
 
 class DetailBilder {
     
-//    static func getDetailVC(by photoViewModel: PhotoViewModel) -> UIViewController {
-//        let view = DetailViewController()
-//        view.modalPresentationStyle = .fullScreen
-//        view.photoViewModel = photoViewModel
-//        return view
-//    }
-    
-    static func getDetailVC(by image: UIImage) -> UIViewController {
+    static func getDetailVC(by image: UIImage) -> DetailViewController {
         let view = DetailViewController()
         view.modalPresentationStyle = .fullScreen
         view.image = image

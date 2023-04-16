@@ -12,6 +12,7 @@ protocol GalleryViewInput: class {
     func show(message: String)
     func didAppendData()
     func didUpdateData()
+    func didUpdateIndex(index: Int, total: Int)
     func loadingStart()
     func loadingFinish()
 }
@@ -24,6 +25,7 @@ final class GalleryViewController: UIViewController {
         didSet {
             searchBar.delegate = self
             searchBar.placeholder = "enter search text"
+            searchBar.isHidden = true
         }
     }
     
@@ -42,11 +44,38 @@ final class GalleryViewController: UIViewController {
         }
     }
     
+    @IBOutlet weak var imageView: UIImageView! {
+        didSet{
+            imageView.isHidden = false
+        }
+    }
+    
     //MARK: - Properties
     
     var presenter: GalleryViewOutput!
     var collectionDataSource: UICollectionViewDiffableDataSource<Section, UIImage>!
-
+    
+    var loadingLabel: UILabel = {
+        let label = UILabel()
+        label.text = "loading image..."
+        label.textAlignment = .center
+        label.textColor = .black
+        label.isHidden = false
+        label.sizeToFit()
+        return label
+    }()
+       
+    var isLoading: Bool = false {
+        didSet {
+            loadingLabel.isHidden = !isLoading
+        }
+    }
+       
+    var loadingMessage: String = "" {
+        didSet {
+            loadingLabel.text = "building index " + loadingMessage
+        }
+    }
     
     //MARK: - LiceCycles
     
@@ -59,6 +88,15 @@ final class GalleryViewController: UIViewController {
         print("GalleryViewController init")
         createDataSource()
         presenter.viewDidLoad()
+        collectionView.addSubview(loadingLabel)
+        collectionView.clipsToBounds = true
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            loadingLabel.centerXAnchor.constraint(equalTo: collectionView.centerXAnchor),
+            loadingLabel.centerYAnchor.constraint(equalTo: collectionView.centerYAnchor),
+            loadingLabel.widthAnchor.constraint(equalToConstant: 300),
+            loadingLabel.heightAnchor.constraint(equalToConstant: 200)
+        ])
     }
     
     private func createDataSource() {
@@ -77,9 +115,6 @@ final class GalleryViewController: UIViewController {
     }
     
     func getLayout() -> UICollectionViewLayout {
-        let leadingGroup = getGroup()
-        let centerGroup = getCenterGroup()
-        let trealingGroup = getGroup()
         let myGroup = getMyGroup()
         let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .fractionalWidth(0.3))
         //let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [leadingGroup, centerGroup, trealingGroup])
@@ -136,6 +171,11 @@ extension GalleryViewController: GalleryViewInput {
         collectionView.scrollToItem(at: IndexPath(item: 0, section: 0), at: .top, animated: true)
     }
     
+    func didUpdateIndex(index: Int, total: Int){
+        loadingMessage = String(index) + "/" + String(total)
+        loadingLabel.sizeToFit()
+    }
+    
     func show(message: String) {
         let alertController = UIAlertController(title: "Error", message: message, preferredStyle: .alert)
         let okAction = UIAlertAction(title: "Ok", style: .cancel)
@@ -149,6 +189,8 @@ extension GalleryViewController: GalleryViewInput {
     
     func loadingFinish() {
         activityIndicator.stopAnimating()
+        isLoading = false
+        searchBar.isHidden = false
     }
 }
 

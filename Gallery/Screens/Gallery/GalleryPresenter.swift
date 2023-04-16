@@ -22,6 +22,7 @@ protocol GalleryInteractorOutput: class {
     func didAppendPhotos(at indexArr: [Int])
     func didUpdatePhotos()
     func didCameError(_ error: Error)
+    func didBuildIndex(index: Int, total: Int)
 }
 
 final class GalleryPresenter {
@@ -55,13 +56,15 @@ extension GalleryPresenter: GalleryViewOutput {
     }
     
     func didPressPhoto(by index: Int) {
-        //router.showDetail(by: photoUIImages[index])
+        router.showDetail(by: photoUIImages[index])
     }
     
     func didPressSearch(by text: String) {
         if self.interactor.isVectorReady == true {
             view.loadingStart()
             interactor.getSearchPhotos(by: text)
+        } else {
+            print("interactor not ready")
         }
     }
     
@@ -86,5 +89,27 @@ extension GalleryPresenter: GalleryInteractorOutput {
     
     func didCameError(_ error: Error) {
         view.show(message: error.localizedDescription)
+    }
+    
+    func didBuildIndex(index: Int, total: Int){
+        view.didUpdateIndex(index: index, total: total)
+    }
+}
+
+
+extension UIImage {
+    func pixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32ARGB, nil, &pixelBuffer)
+        guard let buffer = pixelBuffer, status == kCVReturnSuccess else {
+            return nil
+        }
+        CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0))
+        defer { CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags(rawValue: 0)) }
+        if let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue) {
+            context.draw(self.cgImage!, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return pixelBuffer
+        }
+        return nil
     }
 }

@@ -2,7 +2,7 @@
 //  Clip.mm
 //  Gallery
 //
-//  Created by 任宇宇 on 2021/8/3.
+//  Created by Frank, Yibo, Ashwin on 2023/4/15.
 //
 #import <opencv2/imgcodecs/imgcodecs_c.h>
 #import <opencv2/imgcodecs/ios.h>
@@ -117,9 +117,13 @@ AnnoyIndex<int, float, DotProduct, Kiss32Random, AnnoyIndexMultiThreadedBuildPol
         query_vector[i++] = [number floatValue];
     }
     std::vector<int> results_ids;
-    _index.get_nns_by_vector(query_vector, 10, -1, &results_ids, nullptr);
+    std::vector<float> distances;
+    _index.get_nns_by_vector(query_vector, 30, -1, &results_ids, &distances);
     NSMutableArray* results = [[NSMutableArray alloc] init];
     for (int i = 0; i < results_ids.size(); i++) {
+        if (i > 2 && distances[i] <= 28){
+            break;
+        }
       [results addObject:@(results_ids[i])];
     }
     return [results copy];
@@ -160,8 +164,15 @@ AnnoyIndex<int, float, DotProduct, Kiss32Random, AnnoyIndexMultiThreadedBuildPol
     _index.build(512*2);
     NSData *data = [[NSData alloc] initWithBytes:_index._nodes length:(_index._s*_index._n_nodes)];
     NSError *error = nil;
-    BOOL saved =  [data writeToFile:@"/tmp/tree" options:NSDataWritingAtomic error:&error];
+    NSString *path = [NSHomeDirectory() stringByAppendingString:@"/Documents/index.plist"];
+    BOOL saved =  [data writeToFile:path options:NSDataWritingAtomic error:&error];
     std::cout<<"Index with " << _index._n_items << " samples built and saved:" << saved << "\n";
+    
+    NSLog(@"File saved at: %@", path);
+    
+    if (! saved){
+        NSLog(@"Unable to write file,%@", error.localizedDescription);
+    }
     return nil;
 }
 @end

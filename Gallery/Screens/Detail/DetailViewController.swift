@@ -27,16 +27,13 @@ final class DetailViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-//        if let photoViewModel = photoViewModel {
-//            navItem.title = ""
-//            photoImageView.sd_setImage(with: URL(string: photoViewModel.link))
-//            //dateLabel.text = photoViewModel.date
-//        }
         if let image = image {
             navItem.title = ""
             photoImageView.image = image
             //dateLabel.text = photoViewModel.date
         }
+        
+        print("reloading")
     }
    
     //MARK: - IBActions

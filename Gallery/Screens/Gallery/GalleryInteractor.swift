@@ -11,6 +11,7 @@ import AVFoundation
 import UIKit
 import Accelerate
 import Cereal
+import CoreML
 
 protocol GalleryInteractorInput {
     var photos: [Photo] { get }
@@ -24,12 +25,14 @@ protocol GalleryInteractorInput {
     func willShowPhoto(by index: Int)
 }
 
+@available(iOS 14.0, *)
 final class GalleryInteractor {
     
     unowned let presenter: GalleryInteractorOutput
     var networkService: NetworkServiceProtocol!
     var storeService: StoreServiceProtocol!
     var assetResults : PHFetchResult<AnyObject>!
+    var view: UIViewController
 
     var photos: [Photo] = []
     var localImages: [UIImage] = []
@@ -50,9 +53,11 @@ final class GalleryInteractor {
     private var IndexModule: IndexingModule? = nil;
 
     
-    private var CLIPImagemodule: CLIPImageTorchModule? = nil
+    //private var CLIPImagemodule: CLIPImageTorchModule? = nil
+    private var ImageEncoder: CLIPImageEncoder? = nil
     
     init(presenter: GalleryInteractorOutput) {
+        self.view = UIViewController()
         self.presenter = presenter
         self.tokenizer.loadJsons()
         print("GalleryInteractor init")
@@ -62,7 +67,7 @@ final class GalleryInteractor {
         print("GalleryInteractor deinit")
     }
     
-    //MARK: - Metods
+    //MARK: - Methods
     private func appendPhotos(_ response: Response) {
         storeService.addPhotos(response.photos)
         nextPageUrl = response.nextPageUrl
@@ -81,66 +86,100 @@ final class GalleryInteractor {
         nextPageUrl = response.nextPageUrl
         presenter.didUpdatePhotos()
     }
+    
+    private func updateIndex(index: Int, total: Int){
+        presenter.didBuildIndex(index: index, total: total)
+    }
+    
+    //Image to CV Pixel BUffer
+    private func buffer(from image: UIImage) -> CVPixelBuffer? {
+        let attrs = [kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue, kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue] as CFDictionary
+        var pixelBuffer : CVPixelBuffer?
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, 224, 224, kCVPixelFormatType_32ARGB, attrs, &pixelBuffer)
+        guard (status == kCVReturnSuccess) else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
+        let pixelData = CVPixelBufferGetBaseAddress(pixelBuffer!)
+
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(data: pixelData, width: 224, height: 224, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer!), space: rgbColorSpace, bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
+
+        context?.translateBy(x: 0, y: 224)
+        context?.scaleBy(x: 1.0, y: -1.0)
+
+        UIGraphicsPushContext(context!)
+        image.draw(in: CGRect(x: 0, y: 0, width: 224, height: 224))
+        UIGraphicsPopContext()
+        CVPixelBufferUnlockBaseAddress(pixelBuffer!, CVPixelBufferLockFlags(rawValue: 0))
+
+        return pixelBuffer
+    }
+
+    private func preprocess(image: UIImage) -> CVPixelBuffer {
+        let size = CGSize(width: 224, height: 224)
+
+        guard let pixels = image.pixelBuffer(width: 224, height: 224) else {
+            fatalError("Unable to convert the image")
+        }
+
+        print(">>> Finished preprocessing")
+
+        return pixels
+    }
 }
 
 //MARK: - GalleryInteractorInput
 
+@available(iOS 14.0, *)
 extension GalleryInteractor: GalleryInteractorInput {
     
     func getPhotos() {
-        let albumName = "Test2"
-        var assetCollection = PHAssetCollection()
-        var albumFound = Bool()
+        let albumName = "Lightroom"
         var photoAssets = PHFetchResult<AnyObject>()
         let fetchOptions = PHFetchOptions()
 
         fetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
         let collection:PHFetchResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
 
-        if let firstObject = collection.firstObject{
-            //found the album
-            assetCollection = firstObject
-            albumFound = true
-        }
-        else { albumFound = false }
-        _ = collection.count
-        photoAssets = PHAsset.fetchAssets(in: assetCollection, options: nil) as! PHFetchResult<AnyObject>
+        guard let assetCollection = collection.firstObject else { fatalError("Album not found!") }
+        
         /* Retrieve the items in order of modification date, ascending */
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "modificationDate", ascending: true)]
-        assetResults = PHAsset.fetchAssets(with: .image, options: options) as! PHFetchResult<AnyObject>
+        photoAssets = PHAsset.fetchAssets(in: assetCollection, options: options) as! PHFetchResult<AnyObject>
+        self.assetResults = photoAssets
+        //self.assetResults = (PHAsset.fetchAssets(with: .image, options: options) as! PHFetchResult<AnyObject>)
         isLoading = true
         let imageManager = PHCachingImageManager()
         var flags: Array<Bool> = []
         var done: Bool = false
-        assetResults.enumerateObjects{ [self](object: AnyObject, count: Int, stop: UnsafeMutablePointer<ObjCBool>) in
+        
+        self.assetResults.enumerateObjects{ [self](object: AnyObject, count: Int, stop: UnsafeMutablePointer<ObjCBool>) in
             if object is PHAsset {
                 let asset = object as! PHAsset
-//                let imageSize = CGSize(width: asset.pixelWidth,height: asset.pixelHeight)
-                let imageSize = CGSize(width: 22,height: 22)
+                let imageSize = CGSize(width: 224, height: 224)
 
                 /* For faster performance, and maybe degraded image */
                 let options = PHImageRequestOptions()
-                options.deliveryMode = .fastFormat
+                options.resizeMode = .exact
+                options.deliveryMode = .highQualityFormat
                 flags.append(false)
-//                options.isSynchronous = true
+                options.isSynchronous = false
                 if (count == assetResults.count-1) {
                     done = true
                 }
                 let idx: Int = flags.count-1
-//                imageManager.requestImage(for: asset, targetSize: imageSize, contentMode: PHImageContentMode.aspectFit, options: options, resultHandler: { (image: UIImage?, info:[AnyHashable:Any]?) in
-//                    self.showedImages.append(image!)
-//                })
-                imageManager.requestImage(for: asset, targetSize: imageSize, contentMode: .default, options: options, resultHandler: { (image: UIImage?, info:[AnyHashable:Any]?) in
+                print(">>>",idx,": ", asset.localIdentifier)
+
+                imageManager.requestImage(for: asset,targetSize: imageSize, contentMode: .default, options: options, resultHandler: { (image: UIImage?, info:[AnyHashable:Any]?) in
+                    
                     self.localImages.append(image!)
                     flags[idx] = true
                 })
             }
         }
-//        self.localImages = []
-//        self.showedImages = self.localImages
-//        self.isLoading = false
-//        self.presenter.didUpdatePhotos()
         
         DispatchQueue.global(qos: .userInitiated).async {
             while done == false {}
@@ -156,13 +195,8 @@ extension GalleryInteractor: GalleryInteractorInput {
                     break
                 }
             }
-            DispatchQueue.main.async {
-
-                self.showedImages = self.localImages
-                self.isLoading = false
-                self.presenter.didUpdatePhotos()
-            }
-          // Mobile app will remain to be responsive to user actions
+            
+            // Mobile app will remain to be responsive to user actions
             self.CLIPTextmodule = {
                 if let filePath = Bundle.main.path(forResource: "text", ofType: "pt"),
                     let module = CLIPNLPTorchModule(fileAtPath: filePath) {
@@ -174,62 +208,75 @@ extension GalleryInteractor: GalleryInteractorInput {
             }()
 
             //check if index file exists
-            let fileManager = FileManager.default
-            let filePath:String = NSHomeDirectory() + "/Documents/kmeans.plist"
-            let vec_filePath:String = NSHomeDirectory() + "/Documents/vectors.plist"
-            let exist = fileManager.fileExists(atPath: filePath)
-            let vec_exist = fileManager.fileExists(atPath: vec_filePath)
-            let annoy_index_exist = fileManager.fileExists(atPath: "/tmp/tree")
-            if exist == true && vec_exist == true && annoy_index_exist==true{
+            let image_vector_local = UserDefaults.standard.object(forKey: "image_vector") as? [[NSNumber]]
+            if (image_vector_local != nil && (image_vector_local!).count == 10000){
+                print("image_vector_local found, building from existing source...")
                 self.IndexModule = IndexingModule()
-//                var dictionary:NSMutableDictionary = [:]
-//                dictionary = NSMutableDictionary(contentsOfFile: filePath)!
-//                 de-serialize images' vectors
-//                let N = dictionary["N"] as! Int
-//                let vectors_data: Data = try! Data(contentsOf: URL(fileURLWithPath: vec_filePath))
-//                var decoder = try! CerealDecoder(data: vectors_data)
-//                for i in 0..<N {
-//                    self.double_vectors.append(try! decoder.decode(key: String(i))!)
-//                }
-                // restore KMeans index's metadata, including:
-//                KMeans.sharedInstance.vectors = self.double_vectors
-//                KMeans.sharedInstance.clusteringNumber = dictionary["K"] as! Int
-//                KMeans.sharedInstance.finalClusters = dictionary["clusters"] as! [[Int]]
-//                KMeans.sharedInstance.finalCentroids = dictionary["centroids"] as! [[Double]]
-            }else {
-                if(annoy_index_exist) {
-                    try! fileManager.removeItem(atPath: "/tmp/tree")
-                }
-                self.CLIPImagemodule = {
-                    if let filePath = Bundle.main.path(forResource: "student_image", ofType: "pt"),
-                        let module = CLIPImageTorchModule(fileAtPath: filePath) {
-                        NSLog("CLIP Image encoder loaded")
-                        return module
-                    } else {
-                        fatalError("Failed to load clip image model!")
-                    }
-                }()
+                self.IndexModule?.buildIndex(datas: image_vector_local!)
+                print("finished fetch the existing source")
+                
+                
+            } else {
+                
+                print("Error using the existing image source, building image from scratch...")
+                
+                
+                self.ImageEncoder = try! CLIPImageEncoder()
                 self.IndexModule = IndexingModule()
 //                var encoder = CerealEncoder()
                 let imageSize = CGSize(width: 224,height: 224)
                 let options = PHImageRequestOptions()
                 let imageManager_ = PHImageManager.default()
-                options.deliveryMode = .highQualityFormat
+                options.deliveryMode = .fastFormat
                 options.isSynchronous = true
                 var image_vectors: Array<Array<Float>> = []
+                
+                var index = 0
+                
                 self.assetResults.enumerateObjects{ [self](object: AnyObject, count: Int, stop: UnsafeMutablePointer<ObjCBool>) in
+                    print("progress: ", index, "/" , self.assetResults.count)
+                    
+                    
+                    DispatchQueue.main.async { [self] in
+                        updateIndex(index: index, total: self.assetResults.count)
+                    }
+                    
+                    
+                    index += 1
                     if object is PHAsset {
                         let asset = object as! PHAsset
                         autoreleasepool {
                             imageManager_.requestImage(for: asset, targetSize: imageSize, contentMode: PHImageContentMode.aspectFit, options: options, resultHandler: { (image: UIImage?, _) in
                                     image_vectors.append(self.CLIPImagemodule!.test_uiimagetomat(image: image!) as! Array<Float>)
-    //                                self.IndexModule?.buildIndexOne(data: (self.CLIPImagemodule?.test_uiimagetomat(image: image!))!)
-    //                                self.CLIPImagemodule?.test_uiimagetomat(image: image!)
+                                
+                                    self.IndexModule?.buildIndexOne(data: (self.CLIPImagemodule?.test_uiimagetomat(image: image!))!)
+                                    self.CLIPImageModule?.test_uiimagetomat(image: image!)
+                                
+                                do {
+                                    let MLArray = try self.ImageEncoder?.prediction(pixel_values: self.buffer(from: image!)!).var_1051
+
+                                    // Init our output array
+                                    var array: Array<Float> = []
+
+                                    // Get length
+                                    let length = MLArray!.count
+
+                                    // Set content of multi array to our out put array
+                                    for i in 0...length - 1 {
+                                        array.append(Float(truncating: MLArray![[0,NSNumber(value: i)]]))
+                                    }
+                                    image_vectors.append(array)
+
+                                } catch let error {
+                                    print("Error occurred: \(error.localizedDescription)")
+                                    fatalError("Some error")
+                                }
+                                
                             })
                         }
                     }
                 }
-                self.IndexModule?.buildIndex(datas: image_vectors as! [[NSNumber]])
+                self.IndexModule?.buildIndex(datas: image_vectors as [[NSNumber]])
 //                self.IndexModule?.save()
 //                let vec = self.localImages.map{
 //                    (self.CLIPImagemodule!.test_uiimagetomat(image:$0))! }
@@ -253,6 +300,16 @@ extension GalleryInteractor: GalleryInteractorInput {
 //                dictionary["K"] = KMeans.sharedInstance.clusteringNumber
 //                dictionary.write(toFile: filePath, atomically: true)
 //                self.double_vectors = KMeans.sharedInstance.vectors
+                
+                UserDefaults.standard.set(image_vectors, forKey: "image_vector")
+                
+            }
+            DispatchQueue.main.async {
+
+                self.showedImages = self.localImages
+                self.isLoading = false
+                self.presenter.didUpdatePhotos()
+                
             }
             self.isVectorReady = true
             print("done")
@@ -261,7 +318,7 @@ extension GalleryInteractor: GalleryInteractorInput {
     
     func getSearchPhotos(by text: String) {
         isLoading = true
-        if text == "reset" || text == "Reset" {
+        if text == "reset" || text == "Reset" || text == "" {
             self.showedImages = self.localImages
             presenter.didUpdatePhotos()
             isLoading = false

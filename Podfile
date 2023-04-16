@@ -1,5 +1,5 @@
 platform :ios, '13.4'
-target 'Gallery' do
+target 'Reminiscia' do
   use_frameworks!
   pod 'LibTorch', '~>1.7.1'
   pod 'OpenCV', '~>3.0.0'
