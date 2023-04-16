@@ -16,4 +16,4 @@ $ pip install git+https://github.com/openai/CLIP.git
 - Query the images with `$ python query_index.py {query}`
 
 ### Screenshot
-+ <img src="all.png" width=300px height=600px> &ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;  <img src="./47011681673412_.pic.jpg" width=300px height=600px>
++ <img src="./47011681673412_.pic.jpg" width=300px height=600px> &ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;&ensp;  <img src="./47021681673415_.pic.jpg" width=300px height=600px> <img src="./47031681673419_.pic.jpg" width=300px height=600px>
